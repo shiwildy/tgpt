@@ -21,6 +21,7 @@ type ExtraOptions struct {
 	IsGetCode         bool
 	IsInteractive     bool
 	DisableInputLimit bool
+	IsMarkdown        bool
 }
 
 type CommonResponse struct {

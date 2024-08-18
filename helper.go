@@ -42,16 +42,16 @@ var (
 
 func getDataResponseTxt(input string, params structs.Params, extraOptions structs.ExtraOptions) string {
 	return makeRequestAndGetData(input, structs.Params{
-		ApiKey:      *apiKey,
-		ApiModel:    *apiModel,
-		Provider:    *provider,
-		Max_length:  *max_length,
-		Temperature: *temperature,
-		Top_p:       *top_p,
-		Preprompt:   *preprompt,
-		Url:         *url,
+		ApiKey:       *apiKey,
+		ApiModel:     *apiModel,
+		Provider:     *provider,
+		Max_length:   *max_length,
+		Temperature:  *temperature,
+		Top_p:        *top_p,
+		Preprompt:    *preprompt,
+		Url:          *url,
 		PrevMessages: params.PrevMessages,
-		ThreadID: params.ThreadID,
+		ThreadID:     params.ThreadID,
 	}, extraOptions)
 }
 
@@ -651,7 +651,9 @@ func makeRequestAndGetData(input string, params structs.Params, extraOptions str
 		}
 
 		// Handling each part
-		return handleEachPart(resp, input)
+		if !extraOptions.IsMarkdown {
+			return handleEachPart(resp, input)
+		}
 	}
 
 	if extraOptions.IsGetCommand {
@@ -673,7 +675,7 @@ func makeRequestAndGetData(input string, params structs.Params, extraOptions str
 		previousText = newText
 		fullText += mainText
 
-		if !extraOptions.IsGetWhole {
+		if !extraOptions.IsGetWhole && !extraOptions.IsMarkdown {
 			fmt.Print(mainText)
 		}
 	}
@@ -685,6 +687,18 @@ func makeRequestAndGetData(input string, params structs.Params, extraOptions str
 
 	if extraOptions.IsGetWhole {
 		fmt.Println(fullText)
+	}
+
+	if extraOptions.IsMarkdown {
+		cmd := exec.Command("glow", "-")
+		cmd.Stdin = strings.NewReader(fullText)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	
+		err := cmd.Run()
+		if err != nil {
+			fmt.Println("Error:", err)
+		}
 	}
 
 	if extraOptions.IsGetSilent || extraOptions.IsGetCode {

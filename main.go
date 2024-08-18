@@ -42,7 +42,7 @@ var top_p *string
 var max_length *string
 var preprompt *string
 var url *string
-var logFile *string	
+var logFile *string
 var shouldExecuteCommand *bool
 var disableInputLimit *bool
 
@@ -104,7 +104,10 @@ func main() {
 	isChangelog := flag.Bool("cl", false, "See changelog of versions")
 	flag.BoolVar(isChangelog, "changelog", false, "See changelog of versions")
 
-	disableInputLimit := flag.Bool("disable-input-limit", false, "Disables the checking of 4000 character input limit")
+	isMarkdown := flag.Bool("md", false, "Renders text with markdown using glow. Disables streamed responses")
+	flag.BoolVar(isMarkdown, "markdown", false, "Renders text with markdown using glow. Disables streamed responses")
+
+	disableInputLimit = flag.Bool("disable-input-limit", false, "Disables the checking of 4000 character input limit")
 
 	flag.Parse()
 
@@ -262,11 +265,11 @@ func main() {
 						if previousMessages == "" {
 							input = *preprompt + input
 						}
-						responseJson, responseTxt := getData(input,  structs.Params{
+						responseJson, responseTxt := getData(input, structs.Params{
 							PrevMessages: previousMessages,
 							ThreadID:     threadID,
 							Provider:     *provider,
-						}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit})
+						}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit, IsMarkdown: *isMarkdown, IsNormal: true})
 						if len(*logFile) > 0 {
 							utils.LogToFile(responseTxt, "ASSISTANT_RESPONSE", *logFile)
 						}
@@ -305,7 +308,7 @@ func main() {
 						PrevMessages: previousMessages,
 						Provider:     *provider,
 						ThreadID:     threadID,
-					}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit})
+					}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit, IsNormal: true, IsMarkdown: true})
 					previousMessages += responseJson
 					lastResponse = responseTxt
 
