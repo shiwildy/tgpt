@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-
 ## Install script for GNU/Linux & MacOS
 set -e
 path=/usr/local/bin
