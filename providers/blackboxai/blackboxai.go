@@ -30,17 +30,12 @@ func NewRequest(input string, params structs.Params) (*http.Response, error) {
 				"role": "user"
 			}
 		],
-		"id": "",
-		"previewToken": null,
-		"userId": "",
-		"codeModelMode": true,
-		"agentMode": {},
-		"trendingAgentMode": {},
-		"isMicMode": false
+		"model": "deepseek-ai/DeepSeek-R1",
+		"max_tokens": "10000"
 	}
 	`,params.PrevMessages, string(safeInput)))
 
-	req, err := http.NewRequest("POST", "https://www.blackbox.ai/api/chat", data)
+	req, err := http.NewRequest("POST", "https://api.blackbox.ai/api/chat", data)
 	if err != nil {
 		fmt.Println("\nSome error has occurred.")
 		fmt.Println("Error:", err)

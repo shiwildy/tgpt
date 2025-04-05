@@ -75,6 +75,8 @@ func NewRequest(input string, params structs.Params, prevMessages string) (*http
 		headers["x-vqd-4"] = vqd
 	}
 
+	headers["x-vqd-hash-1"] = "abcdefg"
+
 	// We don't make new status requests after the first one
 	// We get the vqd from the main requests afterwards
 
@@ -85,7 +87,7 @@ func NewRequest(input string, params structs.Params, prevMessages string) (*http
 	// "mistralai/Mixtral-8x7B-Instruct-v0.1"
 	// "claude-3-haiku-20240307"
 
-	model := "gpt-4o-mini"
+	model := "o3-mini"
 	if params.ApiModel != "" {
 		model = params.ApiModel
 	}

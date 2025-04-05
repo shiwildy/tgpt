@@ -1,4 +1,4 @@
-package openai
+package deepseek
 
 import (
 	"encoding/json"
@@ -19,39 +19,31 @@ func NewRequest(input string, params structs.Params) (*http.Response, error) {
 		os.Exit(0)
 	}
 
-	model := "gpt-3.5-turbo"
+	model := "deepseek-reasoner"
 	if params.ApiModel != "" {
 		model = params.ApiModel
-	} else if envModel := os.Getenv("OPENAI_MODEL"); envModel != "" {
+	} else if envModel := os.Getenv("DEEPSEEK_MODEL"); envModel != "" {
 		model = envModel
 	}
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
 	if params.ApiKey != "" {
 		apiKey = params.ApiKey
 	}
 
-	url := params.Url
-	if os.Getenv("OPENAI_URL") != "" {
-		url = os.Getenv("OPENAI_URL")
-	}
-
-	temperature := "0.5"
+	temperature := "0.6"
 	if params.Temperature != "" {
 		temperature = params.Temperature
 	}
 
-	top_p := "0.5"
+	top_p := "1"
 	if params.Top_p != "" {
 		top_p = params.Top_p
 	}
 
 	safeInput, _ := json.Marshal(input)
 
-	includeTopP := !strings.HasPrefix(model, "o1")
-
-	baseFormat := `{
-		"frequency_penalty": 0,
+	var data = strings.NewReader(fmt.Sprintf(`{
 		"messages": [
 			%v
 			{
@@ -60,35 +52,19 @@ func NewRequest(input string, params structs.Params) (*http.Response, error) {
 			}
 		],
 		"model": "%v",
-		"presence_penalty": 0,
 		"stream": true,
-		"temperature": %v`
-
-	if includeTopP {
-		baseFormat += `,
-		"top_p": %v`
+		"temperature": %v,
+		"top_p": %v
 	}
+	`, params.PrevMessages, string(safeInput), model, temperature, top_p))
 
-	baseFormat += `
-	}
-	`
-
-	// Prepare the arguments for fmt.Sprintf
-	args := []interface{}{params.PrevMessages, string(safeInput), model, temperature}
-	if includeTopP {
-		args = append(args, top_p)
-	}
-
-	dataStr := fmt.Sprintf(baseFormat, args...)
-	data := strings.NewReader(dataStr)
-
-	req, err := http.NewRequest("POST", url, data)
+	req, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", data)
 	if err != nil {
 		fmt.Println("\nSome error has occurred.")
 		fmt.Println("Error:", err)
 		os.Exit(0)
 	}
-
+	// Setting all the required headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
@@ -96,9 +72,13 @@ func NewRequest(input string, params structs.Params) (*http.Response, error) {
 }
 
 func GetMainText(line string) (mainText string) {
+	// fmt.Println(line)
 	var obj = "{}"
 	if len(line) > 1 {
-		obj = strings.Split(line, "data: ")[1]
+		objArr := strings.Split(line, "data: ")
+		if len(objArr) > 1 {
+			obj = objArr[1]
+		}
 	}
 
 	var d structs.CommonResponse

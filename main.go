@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/aandrew-me/tgpt/v2/imagegen"
 	"github.com/aandrew-me/tgpt/v2/structs"
 	"github.com/aandrew-me/tgpt/v2/utils"
 	"github.com/atotto/clipboard"
@@ -22,7 +23,7 @@ import (
 	"github.com/olekukonko/ts"
 )
 
-const localVersion = "2.8.2"
+const localVersion = "2.9.4"
 
 var bold = color.New(color.Bold)
 var boldBlue = color.New(color.Bold, color.FgBlue)
@@ -44,7 +45,9 @@ var preprompt *string
 var url *string
 var logFile *string
 var shouldExecuteCommand *bool
-var disableInputLimit *bool
+var out *string
+var height *int
+var width *int
 
 func main() {
 	execPath, err := os.Executable()
@@ -62,12 +65,22 @@ func main() {
 
 	apiModel = flag.String("model", "", "Choose which model to use")
 	provider = flag.String("provider", os.Getenv("AI_PROVIDER"), "Choose which provider to use")
-	apiKey = flag.String("key", "", "Use personal API Key")
+	apiKey = flag.String("key", os.Getenv("AI_API_KEY"), "Use personal API Key")
 	temperature = flag.String("temperature", "", "Set temperature")
 	top_p = flag.String("top_p", "", "Set top_p")
 	max_length = flag.String("max_length", "", "Set max length of response")
 	preprompt = flag.String("preprompt", "", "Set preprompt")
-	url = flag.String("url", "https://api.openai.com/v1/chat/completions", "url for openai providers")
+	out = flag.String("out", "", "Output file path")
+	width = flag.Int("width", 1024, "Output image width")
+	height = flag.Int("height", 1024, "Output image height")
+
+	defaultUrl := ""
+	if *provider == "openai" {
+		// ideally default value should be inside openai provider file. To retain existing behavior and avoid braking change default value for openai is set here.
+		defaultUrl = "https://api.openai.com/v1/chat/completions"
+	}
+	url = flag.String("url", defaultUrl, "url for openai providers")
+
 	logFile = flag.String("log", "", "Filepath to log conversation to.")
 	shouldExecuteCommand = flag.Bool(("y"), false, "Instantly execute the shell command")
 
@@ -104,14 +117,13 @@ func main() {
 	isChangelog := flag.Bool("cl", false, "See changelog of versions")
 	flag.BoolVar(isChangelog, "changelog", false, "See changelog of versions")
 
-	disableInputLimit := flag.Bool("disable-input-limit", false, "Disables the checking of 4000 character input limit")
-
 	flag.Parse()
 
 	prompt := flag.Arg(0)
 
 	pipedInput := ""
 	cleanPipedInput := ""
+	contextText := ""
 
 	stat, err := os.Stdin.Stat()
 	if err != nil {
@@ -131,6 +143,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	contextTextByte, _ := json.Marshal("\n\nHere is text for the context:\n")
 
 	if len(pipedInput) > 0 {
 		cleanPipedInputByte, err := json.Marshal(pipedInput)
@@ -148,10 +161,12 @@ func main() {
 		}
 		pipedInput = string(safePipedBytes)
 		pipedInput = pipedInput[1 : len(pipedInput)-1]
+		contextText = string(contextTextByte)
 	}
 
-	contextTextByte, _ := json.Marshal("\n\nHere is text for the context:\n")
-	contextText := string(contextTextByte)
+	if len(*preprompt) > 0 {
+		*preprompt += "\n"
+	}
 
 	if len(args) > 1 {
 		switch {
@@ -160,6 +175,43 @@ func main() {
 			fmt.Println("tgpt", localVersion)
 		case *isChangelog:
 			getVersionHistory()
+		case *isImage:
+			params := structs.ImageParams{
+				Params: structs.Params{
+					ApiKey:       *apiKey,
+					ApiModel:     *apiModel,
+					Provider:     *provider,
+					Max_length:   *max_length,
+					Temperature:  *temperature,
+					Top_p:        *top_p,
+					Preprompt:    *preprompt,
+					Url:          *url,
+					PrevMessages: "",
+					ThreadID:     "",
+				},
+				Width:  *width,
+				Height: *height,
+				Out:    *out,
+			}
+
+			if len(prompt) > 1 {
+				trimmedPrompt := strings.TrimSpace(prompt)
+				if len(trimmedPrompt) < 1 {
+					fmt.Fprintln(os.Stderr, "You need to provide some text")
+					fmt.Fprintln(os.Stderr, `Example: tgpt -img "cat"`)
+					os.Exit(1)
+				}
+
+				imagegen.GenerateImg(trimmedPrompt, params, *isQuiet)
+
+			} else {
+				formattedInput := getFormattedInputStdin()
+				if !*isQuiet {
+					fmt.Println()
+				}
+
+				imagegen.GenerateImg(formattedInput, params, *isQuiet)
+			}
 		case *isWhole:
 			if len(prompt) > 1 {
 				trimmedPrompt := strings.TrimSpace(prompt)
@@ -168,11 +220,11 @@ func main() {
 					fmt.Fprintln(os.Stderr, `Example: tgpt -w "What is encryption?"`)
 					os.Exit(1)
 				}
-				getWholeText(*preprompt+trimmedPrompt+contextText+pipedInput, structs.ExtraOptions{DisableInputLimit: *disableInputLimit})
+				getWholeText(*preprompt+trimmedPrompt+contextText+pipedInput, structs.ExtraOptions{IsGetWhole: *isWhole})
 			} else {
 				formattedInput := getFormattedInputStdin()
 				fmt.Println()
-				getWholeText(*preprompt+formattedInput+cleanPipedInput, structs.ExtraOptions{DisableInputLimit: *disableInputLimit})
+				getWholeText(*preprompt+formattedInput+cleanPipedInput, structs.ExtraOptions{IsGetWhole: *isWhole})
 			}
 		case *isQuiet:
 			if len(prompt) > 1 {
@@ -182,11 +234,11 @@ func main() {
 					fmt.Fprintln(os.Stderr, `Example: tgpt -q "What is encryption?"`)
 					os.Exit(1)
 				}
-				getSilentText(*preprompt + trimmedPrompt + contextText + pipedInput, structs.ExtraOptions{DisableInputLimit: *disableInputLimit})
+				getSilentText(*preprompt+trimmedPrompt+contextText+pipedInput, structs.ExtraOptions{})
 			} else {
 				formattedInput := getFormattedInputStdin()
 				fmt.Println()
-				getSilentText(*preprompt + formattedInput + cleanPipedInput, structs.ExtraOptions{DisableInputLimit: *disableInputLimit})
+				getSilentText(*preprompt+formattedInput+cleanPipedInput, structs.ExtraOptions{})
 			}
 		case *isShell:
 			if len(prompt) > 1 {
@@ -231,6 +283,51 @@ func main() {
 			threadID := utils.RandomString(36)
 			history := []string{}
 
+			getAndPrintResponse := func(input string) {
+				input = strings.TrimSpace(input)
+				if len(input) <= 1 {
+					return
+				}
+				if input == "exit" {
+					bold.Println("Exiting...")
+					if runtime.GOOS != "windows" {
+						rawModeOff := exec.Command("stty", "-raw", "echo")
+						rawModeOff.Stdin = os.Stdin
+						_ = rawModeOff.Run()
+						rawModeOff.Wait()
+					}
+					os.Exit(0)
+				}
+				if len(*logFile) > 0 {
+					utils.LogToFile(input, "USER_QUERY", *logFile)
+				}
+				// Use preprompt for first message
+				if previousMessages == "" {
+					input = *preprompt + input
+				}
+				responseJson, responseTxt := getData(input, structs.Params{
+					PrevMessages: previousMessages,
+					ThreadID:     threadID,
+					Provider:     *provider,
+				}, structs.ExtraOptions{IsInteractive: true, IsNormal: true})
+				if len(*logFile) > 0 {
+					utils.LogToFile(responseTxt, "ASSISTANT_RESPONSE", *logFile)
+				}
+				previousMessages += responseJson
+				history = append(history, input)
+				lastResponse = responseTxt
+
+			}
+
+			input := strings.TrimSpace(prompt)
+			if len(input) > 1 {
+				// if prompt is passed in interactive mode then send prompt as first message
+				blue.Println("╭─ You")
+				blue.Print("╰─> ")
+				fmt.Println(input)
+				getAndPrintResponse(input)
+			}
+
 			for {
 				blue.Println("╭─ You")
 				input := Prompt.Input("╰─> ", historyCompleter,
@@ -241,40 +338,8 @@ func main() {
 						Fn:  exit,
 					}),
 				)
+				getAndPrintResponse(input)
 
-				if len(input) > 1 {
-					input = strings.TrimSpace(input)
-					if len(input) > 1 {
-						if input == "exit" {
-							bold.Println("Exiting...")
-							if runtime.GOOS != "windows" {
-								rawModeOff := exec.Command("stty", "-raw", "echo")
-								rawModeOff.Stdin = os.Stdin
-								_ = rawModeOff.Run()
-								rawModeOff.Wait()
-							}
-							os.Exit(0)
-						}
-						if len(*logFile) > 0 {
-							utils.LogToFile(input, "USER_QUERY", *logFile)
-						}
-						// Use preprompt for first message
-						if previousMessages == "" {
-							input = *preprompt + input
-						}
-						responseJson, responseTxt := getData(input, structs.Params{
-							PrevMessages: previousMessages,
-							ThreadID:     threadID,
-							Provider:     *provider,
-						}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit, IsNormal: true})
-						if len(*logFile) > 0 {
-							utils.LogToFile(responseTxt, "ASSISTANT_RESPONSE", *logFile)
-						}
-						previousMessages += responseJson
-						history = append(history, input)
-						lastResponse = responseTxt
-					}
-				}
 			}
 
 		case *isMultiline:
@@ -305,7 +370,7 @@ func main() {
 						PrevMessages: previousMessages,
 						Provider:     *provider,
 						ThreadID:     threadID,
-					}, structs.ExtraOptions{IsInteractive: true, DisableInputLimit: *disableInputLimit, IsNormal: true})
+					}, structs.ExtraOptions{IsInteractive: true, IsNormal: true})
 					previousMessages += responseJson
 					lastResponse = responseTxt
 
@@ -316,20 +381,6 @@ func main() {
 
 			}
 
-		case *isImage:
-			if len(prompt) > 1 {
-				trimmedPrompt := strings.TrimSpace(prompt)
-				if len(trimmedPrompt) < 1 {
-					fmt.Fprintln(os.Stderr, "You need to provide some text")
-					fmt.Fprintln(os.Stderr, `Example: tgpt -img "cat"`)
-					os.Exit(1)
-				}
-				generateImageBlackbox(trimmedPrompt)
-			} else {
-				formattedInput := getFormattedInputStdin()
-				fmt.Println()
-				generateImageBlackbox(*preprompt + formattedInput)
-			}
 		case *isHelp:
 			showHelpMessage()
 		default:
@@ -341,7 +392,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			getData(*preprompt+formattedInput+contextText+pipedInput, structs.Params{}, structs.ExtraOptions{IsNormal: true, IsInteractive: false, DisableInputLimit: *disableInputLimit})
+			getData(*preprompt+formattedInput+contextText+pipedInput, structs.Params{}, structs.ExtraOptions{IsNormal: true, IsInteractive: false})
 		}
 
 	} else {
@@ -350,7 +401,7 @@ func main() {
 		input := scanner.Text()
 		go loading(&stopSpin)
 		formattedInput := strings.TrimSpace(input)
-		getData(*preprompt+formattedInput+pipedInput, structs.Params{}, structs.ExtraOptions{IsInteractive: false, DisableInputLimit: *disableInputLimit})
+		getData(*preprompt+formattedInput+pipedInput, structs.Params{}, structs.ExtraOptions{IsInteractive: false})
 	}
 }
 
@@ -488,7 +539,7 @@ func showHelpMessage() {
 
 	boldBlue.Println("\nSome additional options can be set. However not all options are supported by all providers. Not supported options will just be ignored.")
 	fmt.Printf("%-50v Set Model\n", "--model")
-	fmt.Printf("%-50v Set API Key\n", "--key")
+	fmt.Printf("%-50v Set API Key. (Env: AI_API_KEY)\n", "--key")
 	fmt.Printf("%-50v Set OpenAI API endpoint url\n", "--url")
 	fmt.Printf("%-50v Set temperature\n", "--temperature")
 	fmt.Printf("%-50v Set top_p\n", "--top_p")
@@ -496,6 +547,11 @@ func showHelpMessage() {
 	fmt.Printf("%-50v Set filepath to log conversation to (For interactive modes)\n", "--log")
 	fmt.Printf("%-50v Set preprompt\n", "--preprompt")
 	fmt.Printf("%-50v Execute shell command without confirmation\n", "-y")
+
+	boldBlue.Println("\nOptions supported for image generation (with -image flag)")
+	fmt.Printf("%-50v Output image filename\n", "-s, --out")
+	fmt.Printf("%-50v Output image height\n", "-s, --height")
+	fmt.Printf("%-50v Output image width\n", "-s, --width")
 
 	boldBlue.Println("\nOptions:")
 	fmt.Printf("%-50v Print version \n", "-v, --version")
@@ -510,16 +566,22 @@ func showHelpMessage() {
 
 	boldBlue.Println("\nProviders:")
 	fmt.Println("The default provider is phind. The AI_PROVIDER environment variable can be used to specify a different provider.")
-	fmt.Println("Available providers to use: blackboxai, duckduckgo, groq, koboldai, ollama, openai and phind")
+	fmt.Println("Available providers to use: deepseek, gemini, groq, isou, koboldai, ollama, openai, pollinations and phind")
 
-	bold.Println("\nProvider: blackboxai")
-	fmt.Println("Uses BlackBox model. Great for developers")
+	bold.Println("\nProvider: deepseek")
+	fmt.Println("Uses deepseek-reasoner model by default. Requires API key. Recognizes the DEEPSEEK_API_KEY and DEEPSEEK_MODEL environment variables")
 
-	bold.Println("\nProvider: duckduckgo")
-	fmt.Println("Available models: gpt-4o-mini (default), meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo, mistralai/Mixtral-8x7B-Instruct-v0.1, claude-3-haiku-20240307")
+	// bold.Println("\nProvider: duckduckgo")
+	// fmt.Println("Available models: o3-mini (default), gpt-4o-mini, meta-llama/Llama-3.3-70B-Instruct-Turbo, mistralai/Mixtral-8x7B-Instruct-v0.1, claude-3-haiku-20240307, mistralai/Mistral-Small-24B-Instruct-2501")
 
 	bold.Println("\nProvider: groq")
-	fmt.Println("Requires a free API Key. Supports LLaMA2-70b & Mixtral-8x7b")
+	fmt.Println("Requires a free API Key. Supported models: https://console.groq.com/docs/models")
+
+	bold.Println("\nProvider: gemini")
+	fmt.Println("Requires a free API key. https://aistudio.google.com/apikey")
+
+	bold.Println("\nProvider: isou")
+	fmt.Println("Free provider with web search")
 
 	bold.Println("\nProvider: koboldai")
 	fmt.Println("Uses koboldcpp/HF_SPACE_Tiefighter-13B only, answers from novels")
@@ -533,11 +595,21 @@ func showHelpMessage() {
 	bold.Println("\nProvider: phind")
 	fmt.Println("Uses Phind Model. Great for developers")
 
+	bold.Println("\nProvider: pollinations")
+	fmt.Println("Completely free, default model is gpt-4o. Supported models: https://text.pollinations.ai/models")
+
+	boldBlue.Println("\nImage generation providers:")
+
+	bold.Println("\nProvider: pollinations")
+	fmt.Println("Supported models: flux, turbo")
+
 	boldBlue.Println("\nExamples:")
 	fmt.Println(`tgpt "What is internet?"`)
 	fmt.Println(`tgpt -m`)
 	fmt.Println(`tgpt -s "How to update my system?"`)
 	fmt.Println(`tgpt --provider duckduckgo "What is 1+1"`)
+	fmt.Println(`tgpt --img "cat"`)
+	fmt.Println(`tgpt --img --out ~/my-cat.jpg --height 256 --width 256 "cat"`)
 	fmt.Println(`tgpt --provider openai --key "sk-xxxx" --model "gpt-3.5-turbo" "What is 1+1"`)
 	fmt.Println(`cat install.sh | tgpt "Explain the code"`)
 }

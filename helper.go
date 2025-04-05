@@ -14,6 +14,7 @@ import (
 
 	"github.com/aandrew-me/tgpt/v2/client"
 	"github.com/aandrew-me/tgpt/v2/providers"
+	"github.com/aandrew-me/tgpt/v2/providers/gemini"
 	"github.com/aandrew-me/tgpt/v2/structs"
 	http "github.com/bogdanfinn/fhttp"
 
@@ -67,7 +68,7 @@ func getData(input string, params structs.Params, extraOptions structs.ExtraOpti
 		"role": "user"
 	},{
 		"content": %v,
-		"role": "system"
+		"role": "assistant"
 	},
 	`, string(safeInput), string(safeResponse))
 
@@ -103,6 +104,10 @@ func getData(input string, params structs.Params, extraOptions structs.ExtraOpti
 		response := string(safeResponse)[1 : len(string(safeResponse))-1]
 
 		msgObject = fmt.Sprintf(`<s>[INST] %v [/INST] %v </s>`, input, response)
+	}
+
+	if params.Provider == "gemini" {
+		return gemini.GetInputResponseJson(safeInput, safeResponse), responseTxt
 	}
 
 	return msgObject, responseTxt
@@ -236,7 +241,7 @@ func shellCommand(input string) {
 	getCommand(shellPrompt)
 }
 
-// getCommand will make a request to an AI model, then it will run the response using an appropiate handler (bash, sh OR powershell, cmd)
+// getCommand will make a request to an AI model, then it will run the response using an appropriate handler (bash, sh OR powershell, cmd)
 func getCommand(shellPrompt string) {
 	makeRequestAndGetData(shellPrompt, structs.Params{ApiKey: *apiKey, ApiModel: *apiModel, Provider: *provider, Max_length: *max_length, Temperature: *temperature, Top_p: *top_p, Preprompt: *preprompt, Url: *url}, structs.ExtraOptions{IsGetCommand: true})
 }
@@ -286,8 +291,7 @@ func getVersionHistory() {
 }
 
 func getWholeText(input string, extraOptions structs.ExtraOptions) {
-	makeRequestAndGetData(input, structs.Params{ApiKey: *apiKey, ApiModel: *apiModel, Provider: *provider, Max_length: *max_length, Temperature: *temperature, Top_p: *top_p, Preprompt: *preprompt, Url: *url}, structs.ExtraOptions{IsGetWhole: true})
-	checkInputLength(input, extraOptions.DisableInputLimit)
+	makeRequestAndGetData(input, structs.Params{ApiKey: *apiKey, ApiModel: *apiModel, Provider: *provider, Max_length: *max_length, Temperature: *temperature, Top_p: *top_p, Preprompt: *preprompt, Url: *url}, extraOptions)
 }
 
 func getLastCodeBlock(markdown string) string {
@@ -322,13 +326,6 @@ func getSilentText(input string, extraOptions structs.ExtraOptions) {
 	makeRequestAndGetData(input, structs.Params{ApiKey: *apiKey, ApiModel: *apiModel, Provider: *provider, Max_length: *max_length, Temperature: *temperature, Top_p: *top_p, Preprompt: *preprompt, Url: *url}, extraOptions)
 }
 
-func checkInputLength(input string, disableInputLimit bool) {
-	if len(input) > 4000 && !disableInputLimit {
-		fmt.Fprintln(os.Stderr, "Input exceeds the input limit of 4000 characters")
-		os.Exit(1)
-	}
-}
-
 func handleEachPart(resp *http.Response, input string) string {
 	scanner := bufio.NewScanner(resp.Body)
 
@@ -345,16 +342,13 @@ func handleEachPart(resp *http.Response, input string) string {
 	size, termwidthErr := ts.GetSize()
 	termWidth := size.Col()
 
-	previousText := ""
 	fullText := ""
 
 	for scanner.Scan() {
-		newText := providers.GetMainText(scanner.Text(), *provider, input)
-		if len(newText) < 1 {
+		mainText := providers.GetMainText(scanner.Text(), *provider, input)
+		if len(mainText) < 1 {
 			continue
 		}
-		mainText := strings.Replace(newText, previousText, "", -1)
-		previousText = newText
 		fullText += mainText
 
 		if count <= 0 {
@@ -551,87 +545,6 @@ func handleStatus400(resp *http.Response) {
 // 	}
 // }
 
-func generateImageBlackbox(prompt string) {
-	bold.Println("Generating image...")
-
-	client, err := client.NewClient()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	url := "https://www.blackbox.ai/api/chat"
-
-	payload := strings.NewReader(fmt.Sprintf(`
-	{
-	"messages": [
-		{
-			"content": "%v",
-			"role": "user"
-		}
-	],
-	"previewToken": null,
-	"userId": null,
-	"codeModelMode": true,
-	"agentMode": {
-		"mode": true,
-		"id": "ImageGenerationLV45LJp",
-		"name": "Image Generation"
-	},
-	"trendingAgentMode": {},
-	"isMicMode": false,
-	"maxTokens": 1024,
-	"isChromeExt": false,
-	"githubToken": null,
-	"clickedAnswer2": false,
-	"clickedAnswer3": false,
-	"clickedForceWebSearch": false,
-	"visitFromDelta": false,
-	"mobileClient": false
-}`, string(prompt)))
-
-	req, _ := http.NewRequest("POST", url, payload)
-
-	req.Header.Add("accept", "*/*")
-	req.Header.Add("content-type", "application/json")
-	req.Header.Add("origin", "https://www.blackbox.ai")
-	req.Header.Add("priority", "u=1, i")
-	req.Header.Add("referer", "https://www.blackbox.ai/agent/ImageGenerationLV45LJp")
-	req.Header.Add("sec-ch-ua-platform", "Linux")
-	req.Header.Add("sec-fetch-dest", "empty")
-	req.Header.Add("sec-fetch-mode", "cors")
-	req.Header.Add("sec-fetch-site", "same-origin")
-	req.Header.Add("sec-gpc", "1")
-	req.Header.Add("user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-
-	res, _ := client.Do(req)
-
-	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
-	responseText := string(body)
-
-	if strings.Contains(responseText, "![Generated Image]") {
-		imgLink := strings.ReplaceAll(strings.ReplaceAll(responseText, "![Generated Image](", ""), ")", "")
-
-		fmt.Println("Generated image link: " + imgLink)
-
-		bold.Print("\nDownload image? [y/n]: ")
-		reader := bufio.NewReader(os.Stdin)
-		userInput, _ := reader.ReadString('\n')
-		userInput = strings.TrimSpace(userInput)
-
-		if userInput == "y" || userInput == "" {
-			err := downloadImage(imgLink, "")
-
-			if err != nil {
-				fmt.Println(err)
-			}
-		}
-	} else {
-		fmt.Println("Some error has occured, try again later. Response body: " + responseText)
-	}
-}
-
 func downloadImage(url string, destDir string) error {
 	client, err := client.NewClient()
 	if err != nil {
@@ -704,8 +617,6 @@ func addToShellHistory(command string) {
 }
 
 func makeRequestAndGetData(input string, params structs.Params, extraOptions structs.ExtraOptions) string {
-	checkInputLength(input, extraOptions.DisableInputLimit)
-
 	resp, err := providers.NewRequest(input, params, extraOptions)
 
 	if err != nil {
@@ -754,16 +665,13 @@ func makeRequestAndGetData(input string, params structs.Params, extraOptions str
 	scanner := bufio.NewScanner(resp.Body)
 
 	// Handling each part
-	previousText := ""
 	fullText := ""
 
 	for scanner.Scan() {
-		newText := providers.GetMainText(scanner.Text(), *provider, input)
-		if len(newText) < 1 {
+		mainText := providers.GetMainText(scanner.Text(), *provider, input)
+		if len(mainText) < 1 {
 			continue
 		}
-		mainText := strings.Replace(newText, previousText, "", -1)
-		previousText = newText
 		fullText += mainText
 
 		if !extraOptions.IsGetWhole {

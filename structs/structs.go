@@ -20,7 +20,6 @@ type ExtraOptions struct {
 	IsNormal          bool
 	IsGetCode         bool
 	IsInteractive     bool
-	DisableInputLimit bool
 }
 
 type CommonResponse struct {
@@ -30,4 +29,11 @@ type CommonResponse struct {
 			Content string `json:"content"`
 		} `json:"delta"`
 	} `json:"choices"`
+}
+
+type ImageParams struct {
+	Params
+	Height int
+	Width  int
+	Out    string
 }
